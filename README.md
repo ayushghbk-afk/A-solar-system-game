@@ -4,7 +4,7 @@ A tiny, open-source **solar system game** that runs entirely in the browser.
 No build tools, no frameworks, no backend — just HTML, CSS, and vanilla
 JavaScript, so it works straight from GitHub Pages.
 
-**Live demo:** (your GitHub Pages URL after enabling Pages)
+**Live demo:** https://ayushghbk-afk.github.io/A-solar-system-game/
 
 ---
 
