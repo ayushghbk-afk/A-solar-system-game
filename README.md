@@ -53,7 +53,29 @@ Production build (static, GitHub-Pages-ready):
 ```bash
 npm run build      # outputs to dist/ (relative asset paths)
 npm run preview    # serve the production build locally
+npm test           # headless smoke test of the boot pipeline (no browser)
 ```
+
+## ⚡ Boot performance architecture
+
+The game boots in **stages that yield to the browser** between every
+expensive step, so the boot bar keeps animating on slow devices:
+
+- **Known worlds only** get textures at boot — and capped at
+  `TEX_SIZES_BOOT` (≤ 512 px). Undiscovered worlds are cheap flat-color
+  placeholders.
+- **Lazy textures**: a body gets its detailed surface when you discover it
+  (boot-quality immediately, full quality queued). After the menu appears,
+  known worlds upgrade to full quality **one body per tick** — never a batch.
+- All procedural noise is **seeded per body and sampled in UV space**, so a
+  texture looks the same every session and survives a resolution upgrade
+  (continents don't jump).
+- A **startup watchdog** (`STARTUP.WATCHDOG_MS`) surfaces a "taking too long"
+  panel with a one-click *Try Low Graphics* retry if boot wedges.
+- Quality presets (`GRAPHICS_QUALITY` in `config.js`) drive the renderer's
+  DPR cap, shadows, star density (`low/medium/high` →
+  `2500/3750/5000`, phones get 1600 in low) and asteroid-belt size
+  (`60/120/210`).
 
 ## 🌍 Deploy to GitHub Pages
 
@@ -67,6 +89,7 @@ the Vite project and publishes `dist/` via GitHub Pages automatically
 .
 ├── index.html
 ├── vite.config.js          # base './' → works under any repo sub-path
+├── scripts/smoke.mjs       # headless boot-pipeline smoke test (npm test)
 ├── .github/workflows/deploy.yml
 └── src/
     ├── main.js             # boot + splash → main menu

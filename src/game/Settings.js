@@ -38,6 +38,12 @@ export class SettingsManager {
 
   set(key, value) {
     this.s[key] = value;
+    this.save();
+  }
+
+  // Persist the current settings (used after direct mutations, e.g. the boot
+  // watchdog's "try low graphics" escape hatch before a reload).
+  save() {
     this.ss.save("settings", this.s);
   }
 
@@ -45,6 +51,6 @@ export class SettingsManager {
     const p = qualityPreset(q);
     Object.assign(this.s, p);
     this.s.quality = q;
-    this.ss.save("settings", this.s);
+    this.save();
   }
 }

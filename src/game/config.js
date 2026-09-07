@@ -109,7 +109,10 @@ export const ASTEROID = {
   MIN_RADIUS: 1.1,
   MAX_RADIUS: 4.6,
   ROT_SPEED: 0.5,
-  COUNT_LOW: 90,
+  // Belt density per quality tier. Phones default to LOW (see Settings.js),
+  // so a 2 GB Android never pays for 210 rocks at boot.
+  COUNT_LOW: 60,
+  COUNT_MEDIUM: 120,
   COUNT_HIGH: 210,
   RESPAWN_DIST: 400, // waypoint asteroids respawn if you fly past them
   MINE_RADIUS: 16,
@@ -135,7 +138,11 @@ export const MISSION = {
 
 export const STARFIELD = {
   COUNT_LOW: 2500,
+  COUNT_MEDIUM: 3750,
   COUNT_HIGH: 5000,
+  // Phones get an even sparser sky in LOW — 5,000 points is wasted work on a
+  // 2 GB Android device.
+  COUNT_PHONE: 1600,
   SIZE: 3800,
   NEBULA_SIZE: 3400,
   NEBULA_COLORS: [
@@ -144,10 +151,61 @@ export const STARFIELD = {
   ],
 };
 
+// Map a star-density level ("low" | "medium" | "high") to a point count.
+// Medium used to accidentally fall through to the HIGH count — anything that
+// wasn't "low" got 5,000 stars.
+export function starCountFor(level, phone = false) {
+  if (level === "low") return phone ? STARFIELD.COUNT_PHONE : STARFIELD.COUNT_LOW;
+  if (level === "high") return STARFIELD.COUNT_HIGH;
+  return phone ? Math.round(STARFIELD.COUNT_PHONE * 1.5) : STARFIELD.COUNT_MEDIUM;
+}
+
+// Map a graphics-quality tier to an asteroid-belt count.
+export function asteroidCountFor(quality) {
+  if (quality === "low") return ASTEROID.COUNT_LOW;
+  if (quality === "high") return ASTEROID.COUNT_HIGH;
+  return ASTEROID.COUNT_MEDIUM;
+}
+
+// Procedural planet-texture sizes. BOOT sizes are what may be generated
+// synchronously during the boot sequence (capped so slow devices reach the
+// menu quickly); FULL sizes are generated later — one body per tick, after
+// the game is running, or lazily when an undiscovered body is revealed.
+export const TEX_SIZES_BOOT = { low: 128, medium: 256, high: 512 };
+export const TEX_SIZES_FULL = { low: 256, medium: 512, high: 1024 };
+
+// The single source of truth for per-tier renderer settings. _initRenderer()
+// and applyGraphics() both read from here so the settings panel and the boot
+// path can't drift apart again.
 export const GRAPHICS_QUALITY = {
-  HIGH: { shadows: true, shadowMap: 1024, bloom: 0.9, dprCap: 2, pixelRatio: 2 },
-  MEDIUM: { shadows: true, shadowMap: 512, bloom: 0.6, dprCap: 1.5, pixelRatio: 1.75 },
-  LOW: { shadows: false, shadowMap: 0, bloom: 0.35, dprCap: 1.15, pixelRatio: 1 },
+  HIGH: {
+    shadows: true, shadowMap: 1024, bloom: true, dprCap: 2,
+    stars: "high", planetQuality: "high", asteroids: "high",
+  },
+  MEDIUM: {
+    shadows: true, shadowMap: 512, bloom: true, dprCap: 1.5,
+    stars: "medium", planetQuality: "medium", asteroids: "medium",
+  },
+  LOW: {
+    shadows: false, shadowMap: 0, bloom: false, dprCap: 1.15,
+    stars: "low", planetQuality: "low", asteroids: "low",
+  },
+};
+
+export function graphicsPreset(quality) {
+  return GRAPHICS_QUALITY[String(quality).toUpperCase()] || GRAPHICS_QUALITY.MEDIUM;
+}
+
+// Boot behaviour tuning.
+export const STARTUP = {
+  // If staged initialization hasn't finished within this window, surface a
+  // "startup is taking too long" panel with a low-graphics escape hatch.
+  WATCHDOG_MS: 20000,
+  // First lazy texture upgrade happens this long after the menu appears, so
+  // the menu is visibly alive before any background work starts.
+  UPGRADE_DELAY: 1.5,
+  // Minimum gap between lazy texture jobs (one body per tick, never a batch).
+  UPGRADE_INTERVAL: 0.6,
 };
 
 export const CAMERA = {

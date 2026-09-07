@@ -1,5 +1,11 @@
 // Builds Three.js objects for every body in the solar system from bodyData.
 // All textures are procedural (see assets.js) so there is nothing to fetch.
+//
+// Boot strategy: bodies the player already knows get boot-capped textures
+// (TEX_SIZES_BOOT); undiscovered bodies are created as cheap flat-color
+// placeholders. Detailed textures are generated lazily — after the menu is
+// up, or the moment a body is discovered — one body at a time via the
+// texture work queue pumped by Game.update().
 import * as THREE from "three";
 import {
   makePlanetTexture, makeEarthTextures, makeCloudTexture, makeGasTexture,
@@ -7,10 +13,10 @@ import {
   makeLabelSprite,
 } from "./assets.js";
 import { PLANET_DEFS, MOON_DEFS } from "../game/bodyData.js";
+import { TEX_SIZES_BOOT, TEX_SIZES_FULL } from "../game/config.js";
 
 const TAU = Math.PI * 2;
-
-export const TEX_SIZES = { low: 256, medium: 512, high: 1024 };
+const GAS_IDS = ["jupiter", "saturn", "uranus", "neptune"];
 
 export class PlanetFactory {
   constructor(scene, settings) {
@@ -22,36 +28,43 @@ export class PlanetFactory {
     for (const k of Object.keys(MOON_DEFS)) {
       this._defs.set(k, { id: k, ...MOON_DEFS[k] });
     }
-    this._keyToSpec = new Map(); // quality-key -> generated texture helper result
+    this._cache = new Map(); // id|quality|sizeKey -> generated texture spec
+    this._texQueue = []; // bodies waiting for a (re)generated surface texture
   }
 
   /* ---------------- public API ---------------- */
 
-  makeAll() {
-    for (const def of PLANET_DEFS) {
-      const body = this.buildBody(def, null);
-      if (body) this.bodies.set(def.id, body);
-    }
-    // Moons must be built after their host planets exist (host set on build).
-    for (const def of PLANET_DEFS) {
-      for (const mId of def.moons || []) {
-        const host = this.bodies.get(def.id);
-        const moonDef = this._defs.get(mId);
-        if (!moonDef || !host) continue;
-        const moon = this.buildBody(moonDef, host);
-        this.bodies.set(mId, moon);
-        host.moons.push(moon);
-        moon.parentPlanet = host;
-      }
-    }
-    this._makeStationPart();
-    return this.bodies;
+  // Build one planet (not its moons). deferTexture=true creates a cheap
+  // flat-color placeholder — no procedural texture work at all.
+  makePlanet(def, { deferTexture = false } = {}) {
+    if (this.bodies.has(def.id)) return this.bodies.get(def.id);
+    const body = this.buildBody(def, null, { deferTexture });
+    this.bodies.set(def.id, body);
+    return body;
   }
 
-  buildBody(def, host) {
+  // Build the moons of an already-built planet. The host must exist.
+  makeMoons(planetDef, deferPredicate = () => false) {
+    const host = this.bodies.get(planetDef.id);
+    if (!host) return [];
+    const out = [];
+    for (const mId of planetDef.moons || []) {
+      if (this.bodies.has(mId)) { out.push(this.bodies.get(mId)); continue; }
+      const moonDef = this._defs.get(mId);
+      if (!moonDef) continue;
+      const moon = this.buildBody(moonDef, host, { deferTexture: deferPredicate(mId) });
+      this.bodies.set(mId, moon);
+      host.moons.push(moon);
+      moon.parentPlanet = host;
+      out.push(moon);
+    }
+    return out;
+  }
+
+  buildBody(def, host, { deferTexture = false } = {}) {
     const q = this._qualityKey();
     const isStar = def.id === "sun";
-    const isGas = ["jupiter", "saturn", "uranus", "neptune"].includes(def.id);
+    const isGas = GAS_IDS.includes(def.id);
     const isEarth = def.id === "earth";
     const isMoon = !PLANET_DEFS.find((p) => p.id === def.id);
 
@@ -59,10 +72,19 @@ export class PlanetFactory {
     const group = new THREE.Group();
 
     // --- surface mesh ---
-    const texSpec = this._surface(def, q, isGas, isEarth, isMoon);
+    // Deferred bodies skip texture generation entirely: they start life as a
+    // flat-color sphere (see detailBody) so boot never pays for worlds the
+    // player hasn't discovered yet.
+    const texSpec = deferTexture ? null : this._surface(def, q, isGas, isEarth, isMoon, "boot");
     let material;
     if (isStar) {
       material = new THREE.MeshBasicMaterial({ map: texSpec.tex, color: 0xffffff });
+    } else if (deferTexture) {
+      material = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(def.color || "#888"),
+        roughness: 0.96,
+        metalness: 0,
+      });
     } else {
       material = new THREE.MeshStandardMaterial({
         map: texSpec.tex,
@@ -84,23 +106,8 @@ export class PlanetFactory {
       mesh.material.toneMapped = false;
       extras.glowSprite = this._makeGlow(def, radius);
       group.add(extras.glowSprite);
-    } else if (isEarth) {
-      // clouds + night lights layered above day texture
-      const cloudMat = new THREE.MeshStandardMaterial({
-        map: texSpec.clouds,
-        transparent: true, opacity: 0.85, depthWrite: false,
-      });
-      extras.clouds = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.03, 40, 26), cloudMat);
-      extras.clouds.name = `${def.name} clouds`;
-      extras.clouds.rotation.x = def.tilt || 0;
-      group.add(extras.clouds);
-      const nightMat = new THREE.MeshBasicMaterial({
-        map: texSpec.night, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false,
-      });
-      extras.night = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.002, 40, 26), nightMat);
-      extras.night.name = `${def.name} night lights`;
-      extras.night.rotation.x = def.tilt || 0;
-      group.add(extras.night);
+    } else if (isEarth && !deferTexture) {
+      this._addEarthLayers(def, radius, texSpec, extras, group);
     } else if (def.atmosphere && !isMoon && !def.star) {
       // gas giants keep clouds inside the texture; rocky bodies get glow
       extras.glowSprite = this._makeGlow(def, radius);
@@ -132,6 +139,7 @@ export class PlanetFactory {
       type: isMoon ? "moon" : isStar ? "star" : "planet",
       isStar,
       parentPlanet: host || null,
+      moons: [], // populated by makeMoons()
       orbitRadius: def.orbit || 0,
       // orbital phase derived deterministically from the body id
       phase: this._phase(def.id, host),
@@ -145,10 +153,85 @@ export class PlanetFactory {
       periodDays: def.periodDays || 0,
       anchorOffset: new THREE.Vector3(),
       labelSprite: null,
+      // texture state: true while the surface is still a flat placeholder
+      deferredTexture: deferTexture,
+      texSizeKey: deferTexture ? null : "boot",
     };
 
     group.userData.bodyId = def.id;
     return body;
+  }
+
+  /* ---------------- lazy texture pipeline ---------------- */
+
+  // If a body is still a flat placeholder, give it a boot-quality texture
+  // right away (cheap) and queue a full-quality upgrade for later.
+  ensureDetailed(body) {
+    if (!body || !body.deferredTexture) return;
+    this.detailBody(body, "boot");
+    this.enqueueTexture(body, "full");
+  }
+
+  // (Re)generate the surface texture for a body and swap it in on the mesh.
+  detailBody(body, sizeKey = "boot") {
+    if (!body) return;
+    const def = body.def;
+    const isGas = GAS_IDS.includes(def.id);
+    const isEarth = def.id === "earth";
+    const isMoon = body.type === "moon";
+    const q = this._qualityKey();
+    const spec = this._surface(def, q, isGas, isEarth, isMoon, sizeKey);
+
+    const mat = body.mesh.material;
+    const oldMap = mat.map;
+    mat.map = spec.tex;
+    mat.color.setHex(0xffffff);
+    if (mat.roughness !== undefined) mat.roughness = def.id === "venus" ? 0.9 : 0.96;
+    mat.needsUpdate = true;
+
+    // Earth's cloud + night-light layers arrive with its first texture, and
+    // swap to the sharper ones on upgrade.
+    if (isEarth && spec.clouds && spec.night) {
+      if (!body.extras.clouds) {
+        this._addEarthLayers(def, body.radius, spec, body.extras, body.group);
+      } else {
+        body.extras.clouds.material.map = spec.clouds;
+        body.extras.clouds.material.needsUpdate = true;
+        body.extras.night.material.map = spec.night;
+        body.extras.night.material.needsUpdate = true;
+      }
+    }
+
+    // The replaced (smaller) texture is no longer needed — free it.
+    if (oldMap && oldMap !== spec.tex) {
+      this._evictSpec(def, q, body.texSizeKey);
+      oldMap.dispose();
+    }
+    body.deferredTexture = false;
+    body.texSizeKey = sizeKey;
+  }
+
+  // Queue a body for texture (re)generation. Game.update() pumps at most one
+  // job per interval so no single frame stalls on a big procedural texture.
+  enqueueTexture(body, sizeKey = "full") {
+    if (!body) return;
+    if (this._texQueue.some((e) => e.body === body)) return;
+    this._texQueue.push({ body, sizeKey });
+  }
+
+  hasQueuedTextures() {
+    return this._texQueue.length > 0;
+  }
+
+  pumpTextures() {
+    const job = this._texQueue.shift();
+    if (!job) return false;
+    this.detailBody(job.body, job.sizeKey);
+    return true;
+  }
+
+  clearTextureQueue() {
+    this._texQueue.length = 0;
   }
 
   // Builds a world-space anchor for the given body and attaches geometry.
@@ -189,6 +272,13 @@ export class PlanetFactory {
   }
 
   dispose() {
+    this.clearTextureQueue();
+    for (const spec of this._cache.values()) {
+      for (const k of ["tex", "night", "clouds", "elev"]) {
+        if (spec[k] && spec[k].isTexture) spec[k].dispose();
+      }
+    }
+    this._cache.clear();
     for (const b of this.bodies.values()) {
       this.scene.remove(b.group);
       disposeGroup(b.group);
@@ -197,6 +287,25 @@ export class PlanetFactory {
   }
 
   /* ---------------- internal helpers ---------------- */
+
+  // Cloud + night-light shells layered above Earth's day texture.
+  _addEarthLayers(def, radius, texSpec, extras, group) {
+    const cloudMat = new THREE.MeshStandardMaterial({
+      map: texSpec.clouds,
+      transparent: true, opacity: 0.85, depthWrite: false,
+    });
+    extras.clouds = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.03, 40, 26), cloudMat);
+    extras.clouds.name = `${def.name} clouds`;
+    extras.clouds.rotation.x = def.tilt || 0;
+    group.add(extras.clouds);
+    const nightMat = new THREE.MeshBasicMaterial({
+      map: texSpec.night, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false,
+    });
+    extras.night = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.002, 40, 26), nightMat);
+    extras.night.name = `${def.name} night lights`;
+    extras.night.rotation.x = def.tilt || 0;
+    group.add(extras.night);
+  }
 
   _qualityKey() {
     const s = this.settings;
@@ -211,13 +320,14 @@ export class PlanetFactory {
     return (h % 1000) / 1000 * TAU;
   }
 
-  _surface(def, q, isGas, isEarth, isMoon) {
-    // cache textures by id so rebuilding after quality change reuses nothing
-    // (we cache across quality by clearing on change instead)
-    const size = TEX_SIZES[this.settings.planetQuality] || TEX_SIZES.medium;
-    const key = def.id + "|" + q;
-    if (this._cache && this._cache.has(key)) return this._cache.get(key);
-    if (!this._cache) this._cache = new Map();
+  // sizeKey "boot" keeps the canvas within TEX_SIZES_BOOT (max 512) so the
+  // boot screen never waits on a 1024/2048 texture; "full" is the
+  // player-selected planet quality, generated later via the texture queue.
+  _surface(def, q, isGas, isEarth, isMoon, sizeKey = "boot") {
+    const sizes = sizeKey === "full" ? TEX_SIZES_FULL : TEX_SIZES_BOOT;
+    const size = sizes[this.settings.planetQuality] || sizes.medium;
+    const key = def.id + "|" + q + "|" + sizeKey;
+    if (this._cache.has(key)) return this._cache.get(key);
     let spec;
     if (def.id === "sun") {
       spec = { tex: makeSunTexture(size) };
@@ -241,6 +351,19 @@ export class PlanetFactory {
     }
     this._cache.set(key, spec);
     return spec;
+  }
+
+  // Drop a cached spec (e.g. the boot-size one after an upgrade) and free
+  // every texture it holds.
+  _evictSpec(def, q, sizeKey) {
+    if (!sizeKey) return;
+    const key = def.id + "|" + q + "|" + sizeKey;
+    const spec = this._cache.get(key);
+    if (!spec) return;
+    this._cache.delete(key);
+    for (const k of ["tex", "night", "clouds", "elev"]) {
+      if (spec[k] && spec[k].isTexture) spec[k].dispose();
+    }
   }
 
   _makeGlow(def, radius) {
@@ -290,10 +413,6 @@ export class PlanetFactory {
     if (body.id === "earth") return "#aef0ff";
     if (body.id === "mars") return "#ffb08a";
     return "#cfe6ff";
-  }
-
-  _makeStationPart() {
-    // nothing (stations built by SolarSystem using makeLabelSprite here)
   }
 }
 
