@@ -1,72 +1,94 @@
-# 🪐 A-solar-system-game — Orbit Explorer
+# 🚀 Solar Odyssey — a 3D Solar System Game
 
-A tiny, open-source **solar system game** that runs entirely in the browser.
-No build tools, no frameworks, no backend — just HTML, CSS, and vanilla
-JavaScript, so it works straight from GitHub Pages.
+A polished, browser-only **3D solar-system exploration game** built with
+Three.js and Vite. Fly a spaceship from planet to planet, scan worlds, mine
+asteroids, complete missions, upgrade your ship — all generated
+procedurally, with **no backend and no texture downloads**.
 
-**Live demo:** https://ayushghbk-afk.github.io/A-solar-system-game/
+**Play it:** https://ayushghbk-afk.github.io/A-solar-system-game/
 
 ---
 
-## ✨ Features
+## 🎮 What you can do
 
-- **Explore mode** — pan, zoom, and click planets to read facts (distance,
-  diameter, year length, day length, moons, and a fun blurb).
-- **Planet quiz** — 10 randomly selected questions with instant feedback,
-  score tracking, and a stored best score.
-- **Launch mission** — launch a probe from Earth and hit a moving target
-  planet by tuning angle and power (or drag on the canvas to aim).
-- Animated orbits, twinkling stars, an asteroid belt, Saturn's rings,
-  Earth's moon, and subtle sound effects (mutable).
+- **Fly a spaceship** through a living 3D solar system (Sun + Mercury…Neptune,
+  10+ major moons, rings, atmospheres, procedural starfield & nebulas).
+- **Walk on the surface** of Earth, the Moon and Mars with an astronaut.
+- **Scan planets & moons** to log discoveries into your Codex.
+- **Mine asteroids** and **sell ore at space stations**.
+- **Accept missions** — from *First Flight* to a full *Solar System Tour*.
+- **Upgrade** engine, fuel tank, shields, energy cells and hull.
+- **Fast travel** between discovered worlds (fuel cost, cinematic warp).
+- **Save progress** (localStorage) — survives refresh, GitHub Pages friendly.
+- Works on **desktop (keyboard + mouse)** and **phones (touch sticks)**.
 
-## 🚀 How to run locally
+## 🕹 Controls
 
-Because there's no build step, you can open the project however you like:
+| Desktop            | Action                          | Mobile                |
+| ------------------ | ------------------------------- | --------------------- |
+| `W` / `S`          | Thrust forward / brake-reverse  | Left stick            |
+| `A` / `D`          | Strafe left / right             | Left stick            |
+| `Space` / `Ctrl`   | Ascend / descend                | ▲ / ▼ buttons         |
+| `Shift`            | Boost                           | BOOST button          |
+| `Mouse`            | Look (click canvas to lock)     | Right stick           |
+| `E`                | Interact (orbit / land / dock / mine) | E button         |
+| `R`                | Scan nearest / targeted body    | 📡 button             |
+| `C`                | Camera: chase → cockpit → free  | —                     |
+| `M`                | Map & fast travel               | 🗺 button             |
+| `I`                | Info sheet for target / body    | Tap a planet          |
+| `Esc` / `P`        | Pause menu                      | ⏸ button              |
+
+Orbiting a planet with `E` enters a stable auto-orbit; `W`/`S` adjust
+altitude, any RCS/boost input leaves orbit.
+
+## 🚀 Run locally
 
 ```bash
-# Option A: just open it
-xdg-open index.html
+npm install
+npm run dev        # http://localhost:5173
+```
 
-# Option B: serve it with any static server (recommended)
-python3 -m http.server 8080
-# then visit http://localhost:8080
+Production build (static, GitHub-Pages-ready):
+
+```bash
+npm run build      # outputs to dist/ (relative asset paths)
+npm run preview    # serve the production build locally
 ```
 
 ## 🌍 Deploy to GitHub Pages
 
-This repo is already set up for static hosting. To publish it:
+The repo ships with `.github/workflows/deploy.yml`: pushing to `main` builds
+the Vite project and publishes `dist/` via GitHub Pages automatically
+(enable **Settings → Pages → Source: GitHub Actions** once).
 
-1. Push the code to your repository.
-2. Go to **Settings → Pages** on GitHub.
-3. Under **Build and deployment → Source**, choose **Deploy from a branch**.
-4. Select the branch (e.g. `main`) and folder **`/ (root)`**.
-5. Save. GitHub will build and publish the site at
-   `https://<your-username>.github.io/<your-repo>/`.
-
-If you're using GitHub CLI, an alternative is to run:
-
-```bash
-gh api repos/:owner/:repo/pages -X POST -f 'source[branch]=main' -f 'source[path]=/'
-```
-
----
-
-## 🧰 Project structure
+## 🗂 Structure
 
 ```
 .
-├── index.html          # The whole UI (canvas + sidebar panels)
-├── css/style.css       # Styling, responsive layout, animations
-├── js/data.js          # Planet data + quiz question bank
-├── js/game.js          # Simulation, input, quiz and launch logic
-└── README.md
+├── index.html
+├── vite.config.js          # base './' → works under any repo sub-path
+├── .github/workflows/deploy.yml
+└── src/
+    ├── main.js             # boot + splash → main menu
+    ├── style.css
+    ├── game/               # config, solar system, missions, discoveries,
+    │                       # profile, settings, Game.js (orchestrator)
+    ├── three-utils/        # PlanetFactory, procedural texture assets,
+    │                       # Starfield, landing surfaces
+    ├── spacecraft/         # Ship, ShipController, ShipPhysics
+    ├── world/              # AsteroidField, LandingZone, Effects
+    ├── ui/                 # HUD, screens/menus, mobile controls, dom helpers
+    ├── audio/              # AudioManager (WebAudio, all synthesized)
+    └── save/               # SaveSystem (localStorage)
 ```
 
-## 🎮 Controls
+All visuals are generated at runtime from a tiny canvas texture toolkit
+(`three-utils/assets.js`) — the whole game is one ~150 KB gzipped JS bundle
+plus Three.js, so it stays fast even on low-end phones.
 
-| Action            | Explore              | Launch mission            |
-| ----------------- | -------------------- | ------------------------- |
-| Pan               | Drag canvas          | Drag aims the rocket      |
-| Zoom              | Mouse wheel / pinch  | Mouse wheel / pinch       |
-| Click a planet    | View facts           | —                         |
-| Fire the probe    | —                    | Press **Launch**          |
+## ⚙ Tips
+
+- Use the **time warp** slider in Settings to watch planets orbit.
+- Fuel is only consumed by thrust; boost burns it fast. Refuel at stations.
+- Asteroids in the belt and the Earth–Mars corridor are rich in ore.
+- The Codex unlocks as you discover/scan — every entry is earned.
