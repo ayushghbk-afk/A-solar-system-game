@@ -2,176 +2,31 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Orbit Explorer — Solar System Game</title>
-  <meta name="description" content="Explore the solar system, take a planet quiz, and launch rockets in this interactive browser game." />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8C%8C%3C/text%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="css/style.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Solar Odyssey — 3D Solar System Game</title>
+  <meta name="description" content="Solar Odyssey: explore a 3D solar system, fly a spaceship, land on planets, mine asteroids, run missions and upgrade your ship." />
+  <meta name="theme-color" content="#02030a" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='14' fill='%23ffc84a'/%3E%3Ccircle cx='78' cy='34' r='10' fill='%232f6fd0'/%3E%3Cpath d='M62 40 a 36 18 0 1 1 -24 -14' stroke='%23d8bd84' stroke-width='4' fill='none'/%3E%3C/svg%3E" />
+  <script type="module" src="/src/main.js"></script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-icon" aria-hidden="true">🪐</span>
-      <div>
-        <h1>Orbit Explorer</h1>
-        <p class="tagline">A tiny solar-system game in your browser</p>
+  <canvas id="scene" aria-label="Solar Odyssey 3D viewport"></canvas>
+
+  <div id="boot">
+    <div class="boot-card">
+      <div class="boot-logo">
+        <div class="boot-sun"></div>
+        <h1>SOLAR ODYSSEY</h1>
+        <p>Initializing navigation systems…</p>
       </div>
+      <div class="boot-bar"><i id="boot-fill"></i></div>
+      <div class="boot-log" id="boot-log">Booting…</div>
+      <noscript><div class="boot-noscript">This game needs JavaScript. Please enable it.</div></noscript>
     </div>
-    <nav class="tabs" id="tabs" aria-label="Game modes">
-      <button class="tab active" data-mode="explore">🚀 Explore</button>
-      <button class="tab" data-mode="quiz">🧠 Quiz</button>
-      <button class="tab" data-mode="launch">🎯 Launch</button>
-    </nav>
-    <button id="muteBtn" class="icon-btn" title="Toggle sound" aria-label="Toggle sound">🔊</button>
-  </header>
+  </div>
 
-  <main class="app">
-    <aside class="sidebar">
-      <!-- ============ EXPLORE ============ -->
-      <section class="panel" id="explore-panel">
-        <div class="panel-head">
-          <h2>Explore</h2>
-          <span class="badge" id="exploreBadge">Simulation</span>
-        </div>
-        <p class="hint">
-          Drag to pan · Scroll to zoom · Click a planet for facts.
-        </p>
+  <div id="ui-root"></div>
 
-        <div class="info-card" id="infoCard" hidden>
-          <button class="close-btn" id="closeInfo" aria-label="Close planet info">✕</button>
-          <div class="planet-chip" id="infoEmoji">🪐</div>
-          <h3 id="infoName">Planet</h3>
-          <p id="infoType" class="subtitle"></p>
-          <dl class="facts">
-            <div><dt>Distance</dt><dd id="infoDistance"></dd></div>
-            <div><dt>Diameter</dt><dd id="infoDiameter"></dd></div>
-            <div><dt>Year</dt><dd id="infoYear"></dd></div>
-            <div><dt>Day</dt><dd id="infoDay"></dd></div>
-            <div><dt>Moons</dt><dd id="infoMoons"></dd></div>
-          </dl>
-          <p id="infoBlurb" class="blurb"></p>
-        </div>
-
-        <div class="control-stack">
-          <label class="field">
-            <span>Speed</span>
-            <input type="range" id="speedRange" min="0.1" max="10" step="0.1" value="1" />
-            <output id="speedOut">1.0×</output>
-          </label>
-          <div class="row">
-            <button class="btn primary" id="playBtn">⏸ Pause</button>
-            <button class="btn ghost" id="resetTimeBtn">↺ Reset</button>
-          </div>
-          <label class="check-row">
-            <input type="checkbox" id="labelsToggle" checked />
-            <span>Show labels</span>
-          </label>
-          <label class="check-row">
-            <input type="checkbox" id="trailsToggle" checked />
-            <span>Show orbits</span>
-          </label>
-        </div>
-      </section>
-
-      <!-- ============ QUIZ ============ -->
-      <section class="panel hidden" id="quiz-panel">
-        <div class="panel-head">
-          <h2>Planet Quiz</h2>
-          <span class="badge">10 questions</span>
-        </div>
-        <div id="quizIntro">
-          <p class="hint">
-            How well do you know the neighborhood? Answer 10 random questions about our solar system.
-          </p>
-          <button class="btn primary wide" id="startQuizBtn">Start Quiz</button>
-          <div class="score-box" id="bestScore" hidden>
-            <span>Best score: <strong id="bestScoreVal">0/10</strong></span>
-          </div>
-        </div>
-        <div id="quizBody" hidden>
-          <div class="progress-bar"><div id="quizProgress" class="progress-fill"></div></div>
-          <div class="quiz-meta">
-            <span id="quizQuestionNum">Q1 / 10</span>
-            <span id="quizScore">Score: 0</span>
-          </div>
-          <p id="quizQuestion" class="question"></p>
-          <div id="quizOptions" class="options"></div>
-          <p id="quizFeedback" class="feedback"></p>
-          <button class="btn primary wide" id="quizNextBtn" hidden>Next →</button>
-        </div>
-        <div id="quizFinish" hidden>
-          <div class="finish-emoji" id="finishEmoji">🏆</div>
-          <p class="finish-title" id="finishTitle">Great job!</p>
-          <p id="finishStats" class="hint"></p>
-          <div class="row">
-            <button class="btn primary" id="quizAgainBtn">Play again</button>
-            <button class="btn ghost" id="quizBackBtn">Back to Explore</button>
-          </div>
-        </div>
-      </section>
-
-      <!-- ============ LAUNCH ============ -->
-      <section class="panel hidden" id="launch-panel">
-        <div class="panel-head">
-          <h2>Launch Mission</h2>
-          <span class="badge">Aim & fire</span>
-        </div>
-        <p class="hint">
-          Launch a probe from Earth and hit the target planet. Planets keep moving, so lead your shot!
-        </p>
-
-        <label class="field">
-          <span>Target</span>
-          <select id="targetSelect"></select>
-        </label>
-
-        <label class="field">
-          <span>Angle <em id="angleVal">0°</em></span>
-          <input type="range" id="angleRange" min="0" max="360" step="1" value="0" />
-        </label>
-
-        <label class="field">
-          <span>Power <em id="powerVal">60</em></span>
-          <input type="range" id="powerRange" min="10" max="100" step="1" value="60" />
-        </label>
-
-        <button id="autoAimBtn" class="btn ghost small" title="Aim by dragging directly on the canvas">🧭 Auto-aim</button>
-
-        <div class="row">
-          <button class="btn primary" id="launchBtn">🚀 Launch</button>
-          <button class="btn ghost" id="resetLaunchBtn">↺ Reset</button>
-        </div>
-
-        <label class="check-row">
-          <input type="checkbox" id="predictedToggle" checked />
-          <span>Show path preview</span>
-        </label>
-
-        <div class="launch-scores">
-          <div><span>Hits</span><strong id="hitsCount">0</strong></div>
-          <div><span>Misses</span><strong id="missesCount">0</strong></div>
-        </div>
-
-        <div id="launchStatus" class="status-line"></div>
-      </section>
-    </aside>
-
-    <section class="stage">
-      <canvas id="game"></canvas>
-      <div class="hud" id="hud"></div>
-      <div class="toast" id="toast" hidden></div>
-      <div class="overlay center hidden" id="overlay">
-        <div class="overlay-card" id="overlayCard">
-          <div class="planet-chip big" id="overlayEmoji">🚀</div>
-          <h2 id="overlayTitle">Mission accomplished!</h2>
-          <p id="overlayText" class="hint"></p>
-          <button class="btn primary" id="overlayBtn">Continue</button>
-        </div>
-      </div>
-    </section>
-  </main>
-
-  <script src="js/data.js"></script>
-  <script src="js/game.js"></script>
+  <div id="error-layer" hidden></div>
 </body>
 </html>
