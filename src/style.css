@@ -88,6 +88,19 @@ canvas#scene {
 .boot-log { color: var(--dim); font-family: var(--mono); font-size: 12px; min-height: 18px; }
 .boot-noscript { color: var(--red); margin-top: 14px; }
 
+/* startup watchdog panel (shown by main.js if boot exceeds WATCHDOG_MS) */
+.boot-help {
+  margin-top: 18px; text-align: left;
+  border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px 16px; background: rgba(10, 16, 34, 0.85);
+}
+.boot-help-title {
+  color: var(--red); font-weight: 700; letter-spacing: 0.08em;
+  font-size: 13px; margin-bottom: 8px;
+}
+.boot-help-causes { color: var(--dim); font-size: 12px; line-height: 1.55; margin-bottom: 12px; }
+.boot-help-actions { display: flex; gap: 10px; justify-content: center; }
+
 /* ---------- error layer ---------- */
 #error-layer {
   position: fixed; inset: 0; z-index: 100;

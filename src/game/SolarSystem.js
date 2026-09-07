@@ -5,25 +5,68 @@ import * as THREE from "three";
 import { PlanetFactory } from "../three-utils/PlanetFactory.js";
 import { makeLabelSprite } from "../three-utils/assets.js";
 import { ORBIT, UNITS, FAST_TRAVEL } from "../game/config.js";
-import { STATION_DEFS } from "../game/bodyData.js";
+import { STATION_DEFS, PLANET_DEFS } from "../game/bodyData.js";
 import { AsteroidField } from "./AsteroidField.js";
+import { nextFrame } from "../ui/dom.js";
 
 export class SolarSystem {
-  constructor(scene, settings, discovery, asteroidCount) {
+  // The constructor is deliberately cheap — every expensive stage lives in
+  // build(), which yields back to the browser between steps so the boot
+  // screen keeps animating on slow devices.
+  constructor(scene, settings, discovery) {
     this.scene = scene;
     this.settings = settings;
     this.discovery = discovery;
     this.factory = new PlanetFactory(scene, settings);
-    this.bodies = this.factory.makeAll();
+    this.bodies = this.factory.bodies;
     this.byId = this.bodies;
     this.stations = [];
     this.asteroidField = null;
     this._orbital = new Map();
     this._pivots = [];
+    this.held = null;
+  }
+
+  // Staged construction. Known bodies get boot-capped textures (yielding
+  // between each world — Earth alone is three texture passes); undiscovered
+  // bodies are cheap flat-color placeholders detailed on discovery.
+  async build(onStage = () => {}) {
+    const deferUnknown = (id) => !this.discovery.isKnown(id);
+
+    // Pass 1 — worlds the player already knows, one per frame.
+    for (const def of PLANET_DEFS) {
+      if (def.orbit > 0 && deferUnknown(def.id)) continue;
+      onStage(def.id === "sun" ? "Igniting the sun…" : `Generating ${def.name}…`);
+      this.factory.makePlanet(def, { deferTexture: false });
+      this.factory.makeMoons(def, deferUnknown); // e.g. Mars's moons stay placeholders
+      await nextFrame();
+    }
+
+    // Pass 2 — undiscovered worlds as flat-color placeholders. No textures,
+    // no noise loops: pure geometry, so this is one quick chunk.
+    onStage("Scaffolding undiscovered worlds…");
+    for (const def of PLANET_DEFS) {
+      if (!deferUnknown(def.id)) continue;
+      this.factory.makePlanet(def, { deferTexture: true });
+      this.factory.makeMoons(def, () => true);
+    }
+    await nextFrame();
+
+    onStage("Laying orbital pivots…");
     this._makePivots();
+    await nextFrame();
+
+    onStage("Constructing stations…");
     this._makeStations();
     // visible state is driven by discovery; discovered set may already hold items
     this.applyDiscoveryVis();
+    // Safety net: any *known* body that still carries a placeholder (e.g. a
+    // save that knows a moon whose host planet is undiscovered) gets its
+    // texture generated now / queued for upgrade.
+    for (const b of this.bodies.values()) {
+      if (b.deferredTexture && this.discovery.isKnown(b.id)) this.factory.ensureDetailed(b);
+    }
+    await nextFrame();
   }
 
   getBody(id) {
@@ -207,10 +250,15 @@ export class SolarSystem {
   }
 
   // Called when a body is discovered mid-game: reveal + flash effect handled
-  // by the caller; we just flip visibility here.
+  // by the caller; we just flip visibility here. A placeholder body gets its
+  // detailed surface texture at this point (cheap boot pass immediately,
+  // full-quality via the factory's texture queue).
   reveal(id) {
     const b = this.bodies.get(id);
-    if (b) b.group.visible = true;
+    if (b) {
+      b.group.visible = true;
+      this.factory.ensureDetailed(b);
+    }
     const st = this.stations.find((s) => s.id === id);
     if (st) st.group.visible = true;
   }

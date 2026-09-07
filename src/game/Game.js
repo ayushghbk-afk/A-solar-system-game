@@ -18,9 +18,10 @@ import { HUD } from "../ui/HUD.js";
 import { Screens } from "../ui/screens.js";
 import { Toasts } from "../ui/Toasts.js";
 import { MobileControls } from "../ui/MobileControls.js";
-import { detectPhone, el, fmtKm, fmtNum } from "../ui/dom.js";
+import { detectPhone, el, fmtKm, fmtNum, nextFrame } from "../ui/dom.js";
 import {
   TIME, UNITS, SHIP, FAST_TRAVEL, ASTEROID, SCANNER,
+  STARTUP, graphicsPreset, asteroidCountFor,
 } from "./config.js";
 
 const TAU = Math.PI * 2;
@@ -97,6 +98,7 @@ export class Game {
     this._nearestBodyLabel = null;
     this._pendingInfoId = null;
     this._saveTimer = 30;
+    this._texPumpT = 0; // countdown between lazy texture jobs
   }
 
   /* ================= boot ================= */
@@ -107,29 +109,68 @@ export class Game {
     if (el) el.textContent = msg;
   }
 
-  async init() {
+  // Staged initialization. Every expensive step is followed by a yield back
+  // to the browser (see nextFrame) so the boot bar keeps animating — and so
+  // the startup watchdog in main.js can actually fire on a device where a
+  // stage wedges. onProgress(pct) lets the caller drive the boot bar.
+  async init(onProgress) {
+    const progress = (pct, label) => {
+      if (label) this.log(label);
+      if (onProgress) onProgress(pct);
+    };
     this.detectUI();
-    this.log("Initializing rendering…");
+
+    progress(0.08, "Initializing renderer…");
     await this._initRenderer();
-    this.log("Building star field…");
-    this.starfield = new Starfield(this.scene, this.settings.stars);
-    this.log("Generating solar system…");
-    const texSize = this.settings.planetQuality === "high" ? 1024 : this.settings.planetQuality === "low" ? 256 : 512;
-    this.solar = new SolarSystem(this.scene, this.settings, this.discovery, 0);
-    // asteroid count depends on stars setting quality
-    const astCount = this.settings.stars === "low" ? ASTEROID.COUNT_LOW : ASTEROID.COUNT_HIGH;
-    this.solar.createAsteroidField(astCount);
-    this.log("Wiring ships & systems…");
+    await nextFrame();
+
+    progress(0.16, "Building star field…");
+    this.starfield = new Starfield(this.scene, this.settings.stars, this.settings.phone);
+    await nextFrame();
+
+    // Solar system build has its own fine-grained stages (known worlds get
+    // boot-capped textures, undiscovered ones stay cheap placeholders).
+    this.solar = new SolarSystem(this.scene, this.settings, this.discovery);
+    let solarStage = 0;
+    const SOLAR_STAGES = 6;
+    await this.solar.build((label) => {
+      solarStage++;
+      progress(0.2 + (solarStage / SOLAR_STAGES) * 0.55, label);
+    });
+
+    progress(0.78, "Scattering asteroid belt…");
+    this.solar.createAsteroidField(asteroidCountFor(this.settings.quality));
+    await nextFrame();
+
+    progress(0.88, "Wiring ship & systems…");
     this.ship = new Ship(this.scene);
     this.shipPhysics = new ShipPhysics(this.ship, this.solar);
-    this.effects = new Effects(this.scene);
+    this.effects = new Effects(this.scene); // lazy: no particle buffers until first burst
     this.landingZone.scene = this.scene;
     this._makeLights();
-    this.log("Applying discovery state…");
-    this.solar.applyDiscoveryVis();
     this._bindGlobalKeys();
     this._bindPick();
     this.ready = true;
+    progress(1, "Systems nominal.");
+  }
+
+  // After the menu is up, upgrade the boot-capped textures of known worlds
+  // to full quality — one body at a time, spaced out, never a batch.
+  _scheduleTextureUpgrades() {
+    if (!this.solar) return;
+    this._texPumpT = STARTUP.UPGRADE_DELAY;
+    for (const b of this.solar.bodies.values()) {
+      if (!b.deferredTexture) this.solar.factory.enqueueTexture(b, "full");
+    }
+  }
+
+  _pumpTextures(dt) {
+    if (!this.solar || !this.solar.factory) return;
+    if (!this.solar.factory.hasQueuedTextures()) return;
+    this._texPumpT -= dt;
+    if (this._texPumpT > 0) return;
+    this._texPumpT = STARTUP.UPGRADE_INTERVAL;
+    this.solar.factory.pumpTextures();
   }
 
   _bindGlobalKeys() {
@@ -208,6 +249,13 @@ export class Game {
     this.mobile = new MobileControls(this.screens.mobileLayer, this.controller, this);
   }
 
+  // Centralized device-pixel-ratio cap: phones clamp to 1 (1.5 if they
+  // explicitly picked a higher tier), desktop follows the quality preset.
+  _dprCap() {
+    const preset = graphicsPreset(this.settings.quality);
+    return this.settings.phone ? Math.min(1.5, preset.dprCap) : preset.dprCap;
+  }
+
   async _initRenderer() {
     const w = window.innerWidth, hh = window.innerHeight;
     try {
@@ -216,7 +264,7 @@ export class Game {
       this.fail("WebGL could not start. Your browser or device may not support WebGL — try a desktop browser.");
       throw e;
     }
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this._dprCap()));
     this.renderer.setSize(w, hh);
     this.renderer.shadowMap.enabled = this.settings.shadows;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -281,6 +329,8 @@ export class Game {
 
   update(dt) {
     const t = this.simTime;
+    // lazy texture upgrades flow in every mode once the game is running
+    if (this.ready) this._pumpTextures(dt);
     // pause handling
     if (this.paused) {
       this.audio.updateEngine(0, false, dt);
@@ -1691,7 +1741,7 @@ export class Game {
   applyGraphics() {
     const s = this.settings;
     if (this.renderer) {
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, s.quality === "low" ? 1 : 2));
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this._dprCap()));
       this.renderer.shadowMap.enabled = s.shadows;
     }
     if (this.starfield) this.starfield.setDensity(s.stars);

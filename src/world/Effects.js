@@ -28,8 +28,19 @@ void main() {
 }`;
 
 export class Effects {
+  // The particle pool is allocated lazily on first use — boot pays nothing
+  // for effects, and a session that never triggers a burst never uploads a
+  // particle buffer at all.
   constructor(scene) {
     this.scene = scene;
+    this._beams = [];
+    this._active = 0;
+    this._init = false;
+  }
+
+  _ensure() {
+    if (this._init) return;
+    this._init = true;
     this._particles = new Float32Array(MAX_PARTICLES * 3);
     this._colors = new Float32Array(MAX_PARTICLES * 3);
     this._sizes = new Float32Array(MAX_PARTICLES);
@@ -56,13 +67,12 @@ export class Effects {
     });
     this._points = new THREE.Points(geo, mat);
     this._points.frustumCulled = false;
-    scene.add(this._points);
-    this._beams = [];
-    this._active = 0;
+    this.scene.add(this._points);
   }
 
   // Spawn a burst of particles.
   burst(pos, color, { count = 24, speed = 9, size = 2.2, life = 1.1, up = 2, spread = 1, gravity = 0 } = {}) {
+    this._ensure();
     for (let i = 0; i < count; i++) {
       const idx = this._alloc();
       if (idx < 0) return;
@@ -122,33 +132,35 @@ export class Effects {
   }
 
   update(dt) {
-    // particles
-    const gpos = this._geo.attributes.position;
-    const gcol = this._geo.attributes.aColor;
-    const galpha = this._geo.attributes.aAlpha;
-    let changed = false;
-    for (let i = 0; i < MAX_PARTICLES; i++) {
-      if (this._life[i] <= 0) continue;
-      this._life[i] -= dt;
-      if (this._life[i] <= 0) {
-        this._alphas[i] = 0;
-        this._active--;
+    // particles (pool may not exist yet if nothing has burst)
+    if (this._init) {
+      const gpos = this._geo.attributes.position;
+      const gcol = this._geo.attributes.aColor;
+      const galpha = this._geo.attributes.aAlpha;
+      let changed = false;
+      for (let i = 0; i < MAX_PARTICLES; i++) {
+        if (this._life[i] <= 0) continue;
+        this._life[i] -= dt;
+        if (this._life[i] <= 0) {
+          this._alphas[i] = 0;
+          this._active--;
+          changed = true;
+          continue;
+        }
+        const l = this._life[i];
+        const maxL = this._maxLife[i];
+        this._vel[i * 3 + 1] -= this._grav[i] * dt;
+        this._particles[i * 3] += this._vel[i * 3] * dt;
+        this._particles[i * 3 + 1] += this._vel[i * 3 + 1] * dt;
+        this._particles[i * 3 + 2] += this._vel[i * 3 + 2] * dt;
+        this._alphas[i] = (l / maxL);
         changed = true;
-        continue;
       }
-      const l = this._life[i];
-      const maxL = this._maxLife[i];
-      this._vel[i * 3 + 1] -= this._grav[i] * dt;
-      this._particles[i * 3] += this._vel[i * 3] * dt;
-      this._particles[i * 3 + 1] += this._vel[i * 3 + 1] * dt;
-      this._particles[i * 3 + 2] += this._vel[i * 3 + 2] * dt;
-      this._alphas[i] = (l / maxL);
-      changed = true;
-    }
-    if (changed) {
-      gpos.needsUpdate = true;
-      gcol.needsUpdate = true;
-      galpha.needsUpdate = true;
+      if (changed) {
+        gpos.needsUpdate = true;
+        gcol.needsUpdate = true;
+        galpha.needsUpdate = true;
+      }
     }
     // beams
     for (let i = this._beams.length - 1; i >= 0; i--) {
@@ -165,9 +177,11 @@ export class Effects {
   }
 
   dispose() {
-    this.scene.remove(this._points);
-    this._geo.dispose();
-    this._points.material.dispose();
+    if (this._init) {
+      this.scene.remove(this._points);
+      this._geo.dispose();
+      this._points.material.dispose();
+    }
     for (const b of this._beams) {
       this.scene.remove(b.line);
       b.line.geometry.dispose();

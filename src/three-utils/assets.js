@@ -38,12 +38,12 @@ function shade(hex, amt) {
   return `rgb(${r},${g},${b})`;
 }
 
-function speckle(ctx, s, base, count, amt, alpha = 1) {
+function speckle(ctx, s, base, count, amt, alpha = 1, rnd = Math.random) {
   ctx.globalAlpha = alpha;
   for (let i = 0; i < count; i++) {
-    const x = Math.random() * s, y = Math.random() * s;
-    const r = 0.3 + Math.random() * 1.8;
-    ctx.fillStyle = Math.random() < 0.5 ? shade(base, amt) : shade(base, -amt);
+    const x = rnd() * s, y = rnd() * s;
+    const r = 0.3 + rnd() * 1.8;
+    ctx.fillStyle = rnd() < 0.5 ? shade(base, amt) : shade(base, -amt);
     ctx.beginPath();
     ctx.arc(x, y, r, 0, TAU);
     ctx.fill();
@@ -74,34 +74,50 @@ function toTexture(c, size) {
 
 /* ---------------- planet surface (equirectangular) ---------------- */
 
-// Value-noise helper on 2D: wraps X for a seamless equirect texture.
-function valueNoise2(size, wrapX) {
-  const cells = Math.max(2, size / 8) | 0;
-  const g = new Float32Array(cells * cells);
-  for (let i = 0; i < g.length; i++) g[i] = Math.random();
-  function sample(px, py) {
-    const fx = px / size * cells;
-    const fy = py / size * cells;
-    let x0 = Math.floor(fx), y0 = Math.floor(fy);
-    const x1 = (x0 + 1) % cells, y1 = y0 + 1;
-    x0 %= cells; y0 = Math.min(y0, cells - 1);
-    const tx = fx - Math.floor(fx), ty = fy - Math.floor(fy);
-    const sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
-    const v00 = g[x0 + y0 * cells], v10 = g[x1 + y0 * cells];
-    const v01 = g[x0 + Math.min(y1, cells - 1) * cells], v11 = g[x1 + Math.min(y1, cells - 1) * cells];
-    const a = v00 + (v10 - v00) * sx, b = v01 + (v11 - v01) * sx;
-    return a + (b - a) * sy;
+// Stable 32-bit seed from a string (body id) — every body generates the same
+// world every session, and its low-res boot texture matches its high-res
+// upgrade because the noise grid is seeded identically.
+export function seedFromString(str) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
   }
-  return sample;
+  return h >>> 0;
 }
 
-function fbm2(size, octaves, lacunarity = 2.1, gain = 0.5) {
-  const base = valueNoise2(size, true);
-  return (px, py) => {
+// Value-noise helper on the unit square. Coordinates are UV (0..1), NOT
+// pixels, so the pattern is identical at any texture resolution — a 128px
+// boot texture and its 512px upgrade show the same continents. X wraps for a
+// seamless equirect texture.
+function valueNoise2(cells, rng) {
+  const n = Math.max(2, cells | 0);
+  const g = new Float32Array(n * n);
+  for (let i = 0; i < g.length; i++) g[i] = rng();
+  return (u, v) => {
+    const fx = u * n, fy = v * n;
+    let x0 = Math.floor(fx), y0 = Math.floor(fy);
+    const x1 = (x0 + 1) % n, y1 = Math.min(y0 + 1, n - 1);
+    x0 = ((x0 % n) + n) % n;
+    y0 = Math.min(y0, n - 1);
+    const tx = fx - Math.floor(fx), ty = fy - Math.floor(fy);
+    const sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
+    const v00 = g[x0 + y0 * n], v10 = g[x1 + y0 * n];
+    const v01 = g[x0 + Math.min(y1, n - 1) * n], v11 = g[x1 + Math.min(y1, n - 1) * n];
+    const a = v00 + (v10 - v00) * sx, b = v01 + (v11 - v01) * sx;
+    return a + (b - a) * sy;
+  };
+}
+
+// Fractal noise sampled in UV space. Integer lacunarity keeps every octave
+// seamless across the u=0/u=1 wrap.
+function fbm2(octaves, seed, baseCells = 6) {
+  const base = valueNoise2(baseCells, mulberry(seed));
+  return (u, v) => {
     let amp = 1, freq = 1, sum = 0, norm = 0;
     for (let o = 0; o < octaves; o++) {
-      sum += base(px * freq, py * freq) * amp;
-      norm += amp; amp *= gain; freq *= lacunarity;
+      sum += base(u * freq, v * freq) * amp;
+      norm += amp; amp *= 0.5; freq *= 2;
     }
     return sum / norm;
   };
@@ -112,14 +128,14 @@ export function makePlanetTexture(def, size = 512, opts = {}) {
   const { c, ctx } = makeCanvas(size);
   const base = def.color || "#888";
   const accent = def.accent || shade(base, -30);
-  const fbm = fbm2(size, 4);
+  const fbm = fbm2(4, seedFromString(def.id || "planet"));
   const img = ctx.createImageData(size, size);
   const d = img.data;
 
   const hasContinents = opts.continents && base !== accent;
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const n = fbm(x, y);
+      const n = fbm(x / size, y / size);
       let t = 0;
       if (hasContinents) {
         t = Math.sin((n - 0.5) * Math.PI) * 0.5 + 0.5; // island mask
@@ -159,7 +175,7 @@ function hexToRgb(hex) {
 export function makeEarthTextures(size = 512) {
   const mk = (mode) => {
     const { c, ctx } = makeCanvas(size);
-    const fbm = fbm2(size, 4);
+    const fbm = fbm2(4, seedFromString("earth"));
     const img = ctx.createImageData(size, size);
     const d = img.data;
     const oceanDeep = [8, 30, 78];
@@ -171,12 +187,13 @@ export function makeEarthTextures(size = 512) {
     const mix3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
-        const n = fbm(x, y);
+        const u = x / size, v = y / size;
+        const n = fbm(u, v);
         // continental mask
         let landF = Math.sin((n - 0.5) * Math.PI) * 0.5 + 0.5;
         landF = Math.pow(Math.max(0, Math.min(1, landF * 2.0 - 0.5)), 1.3);
-        const lat = Math.abs(y / size - 0.5) * 2; // 0 equator, 1 pole
-        const jitter = (hash01(n * 1000 + x * 0.01) - 0.5) * 0.1;
+        const lat = Math.abs(v - 0.5) * 2; // 0 equator, 1 pole
+        const jitter = (hash01(n * 1000 + u) - 0.5) * 0.1;
         let r, g, b;
         if (mode === "day") {
           let c3;
@@ -197,10 +214,11 @@ export function makeEarthTextures(size = 512) {
           }
           r = c3[0] * (1 + jitter); g = c3[1] * (1 + jitter); b = c3[2] * (1 + jitter);
         } else if (mode === "night") {
-          // city lights on land, sparser toward poles and inland
-          const grid = hash01(Math.floor(x / 4) * 73856093 ^ Math.floor(y / 4) * 19349663);
+          // city lights on land, sparser toward poles and inland. The light
+          // grid is in UV units so it survives resolution upgrades.
+          const grid = hash01(Math.floor(u * 128) * 73856093 ^ Math.floor(v * 64) * 19349663);
           let light = 0;
-          if (landF > 0.14 && grid > 0.986 - landF * 0.012 && lat < 0.72 && hash01(x * 13 + y * 7) > 0.2) {
+          if (landF > 0.14 && grid > 0.986 - landF * 0.012 && lat < 0.72 && hash01(u * 1300 + v * 700) > 0.2) {
             light = 0.55 + grid * 0.45;
           }
           r = light * 255; g = light * 230; b = light * 140;
@@ -231,12 +249,12 @@ export function makeEarthTextures(size = 512) {
 
 export function makeCloudTexture(size = 256, amount = 0.55) {
   const { c, ctx } = makeCanvas(size);
-  const fbm = fbm2(size, 4);
+  const fbm = fbm2(4, seedFromString("earth-clouds"));
   const img = ctx.createImageData(size, size);
   const d = img.data;
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const n = fbm(x, y);
+      const n = fbm(x / size, y / size);
       const swirl = 0.5 + 0.5 * Math.sin((x / size) * 6 + n * 5);
       let v = Math.max(0, n * 1.5 - 0.55) * swirl * 2.2 * amount;
       v = Math.min(1, v);
@@ -256,7 +274,7 @@ export function makeCloudTexture(size = 256, amount = 0.55) {
 export function makeGasTexture(def, size = 1024) {
   const { c, ctx } = makeCanvas(size);
   const w = size, h = Math.floor(size / 2);
-  const fbm = fbm2(size, 3);
+  const fbm = fbm2(3, seedFromString(def.id || "gas"));
   const img = ctx.createImageData(w, h);
   const d = img.data;
   const bandColors = def.bands || [def.color, def.accent, shade(def.color, 25), shade(def.accent, -25)];
@@ -264,13 +282,16 @@ export function makeGasTexture(def, size = 1024) {
   const spotX = def.id === "jupiter" ? 0.28 : 0.5 + hash01(5) * 0.3;
   const spotY = def.id === "jupiter" ? 0.62 : 0.3 + hash01(9) * 0.4;
   const spotR = def.id === "jupiter" ? 0.085 : 0.05;
+  // band frequency is in UV units so the stripe count is identical at every
+  // texture resolution
+  const BAND_FREQ = Math.PI * 2 * 10;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const u = x / w;
-      const n1 = fbm(x, y);
-      const n2 = fbm(x + 300, y + 900);
-      const bands = 2.4 + Math.sin(u * 40 + n1 * 6) * 0.8;
-      const band = Math.sin(y * 0.06 * (1 + n1 * 0.3) * 4.2 + n2 * 2.2) * 0.5 + 0.5;
+      const v = y / h;
+      const n1 = fbm(u, v);
+      const n2 = fbm(u + 0.33, v + 0.87);
+      const band = Math.sin(v * BAND_FREQ * (1 + n1 * 0.3) + n2 * 2.2) * 0.5 + 0.5;
       const bandIdx = Math.floor(band * bandColors.length) % bandColors.length;
       let col = hexToRgb(bandColors[bandIdx]);
       col = [
@@ -279,7 +300,7 @@ export function makeGasTexture(def, size = 1024) {
         col[2] + (n1 - 0.5) * 42,
       ];
       if (hasSpot) {
-        const dx = (u - spotX) / spotR, dy = (y / h - spotY) / spotR;
+        const dx = (u - spotX) / spotR, dy = (v - spotY) / spotR;
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist < 1) {
           // storm interior: swirl + warm core
@@ -321,18 +342,21 @@ export function makeGasTexture(def, size = 1024) {
 /* ---------------- moons / rocky moons ---------------- */
 
 // Speckled sphere texture + (optionally) crater dimples via normal-ish shading.
+// Everything is drawn from a per-body seeded RNG so a moon looks the same
+// every session and at every texture size.
 export function makeMoonTexture(def, size = 512, craters = false) {
   const { c, ctx } = makeCanvas(size);
   const base = def.color || "#aaa";
+  const rnd = mulberry(seedFromString(def.id || "moon"));
   const h = Math.floor(size / 2);
   ctx.fillStyle = shade(base, -18);
   ctx.fillRect(0, 0, size, h);
-  speckle(ctx, size, base, 5000, 34, 0.9);
+  speckle(ctx, size, base, 5000, 34, 0.9, rnd);
   if (craters || def.craters) {
     const count = 60 + Math.floor(size / 6);
     for (let i = 0; i < count; i++) {
-      const x = Math.random() * size, y = Math.random() * h;
-      const r = 1 + Math.pow(Math.random(), 2.2) * size * 0.045;
+      const x = rnd() * size, y = rnd() * h;
+      const r = 1 + Math.pow(rnd(), 2.2) * size * 0.045;
       ctx.fillStyle = shade(base, -46);
       ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
       ctx.fillStyle = shade(base, -70);
@@ -343,7 +367,7 @@ export function makeMoonTexture(def, size = 512, craters = false) {
       ctx.fill();
     }
   }
-  speckle(ctx, size, base, 900, -55, 0.6);
+  speckle(ctx, size, base, 900, -55, 0.6, rnd);
   return toTexture(c, size);
 }
 
@@ -352,14 +376,15 @@ export function makeMoonTexture(def, size = 512, craters = false) {
 export function makeSunTexture(size = 512) {
   const { c, ctx } = makeCanvas(size);
   const h = Math.floor(size / 2);
-  const fbm = fbm2(size, 5);
+  const fbm = fbm2(5, seedFromString("sun"));
   const img = ctx.createImageData(size, h);
   const d = img.data;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < size; x++) {
-      const n = fbm(x, y);
+      const u = x / size;
+      const n = fbm(u, y / h);
       const gran = n * 1.6 - 0.3;
-      const flare = 0.5 + 0.5 * Math.sin(x * 0.7 + n * 20);
+      const flare = 0.5 + 0.5 * Math.sin(u * 176 + n * 20);
       let r = 240 + gran * 60 + flare * 15;
       let g = 150 + gran * 70 + flare * 30;
       let b = 40 + gran * 40;
@@ -459,11 +484,11 @@ export function makeWorldMapTexture(def, size = 192) {
   const { c, ctx } = makeCanvas(size);
   const img = ctx.createImageData(size, size);
   const d = img.data;
-  const fbm = fbm2(size, 3);
+  const fbm = fbm2(3, seedFromString((def.id || "world") + "-map"));
   const base = hexToRgb(def.color || "#aaa");
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const n = fbm(x, y);
+      const n = fbm(x / size, y / size);
       const t = Math.sin((n - 0.5) * Math.PI) * 0.5 + 0.5;
       const v = Math.max(0.35, Math.min(1, t * 0.9 + 0.25));
       const i = (y * size + x) * 4;
@@ -516,7 +541,7 @@ export function makeGroundTile(baseColor, palette, seed) {
     ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke();
   }
   // rocks + speckle
-  speckle(ctx, size, baseColor, 1400, -60, 0.8);
+  speckle(ctx, size, baseColor, 1400, -60, 0.8, rnd);
   for (let i = 0; i < 40; i++) {
     const x = rnd() * size, y = rnd() * size, s = 2 + rnd() * 7;
     ctx.fillStyle = shade(palette[Math.floor(rnd() * palette.length)], -40);

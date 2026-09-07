@@ -1,4 +1,17 @@
 // Tiny DOM helpers used across the UI.
+
+// Yield control back to the browser for one paint. requestAnimationFrame is
+// raced with a timeout so staged boot work keeps flowing even when the tab
+// is backgrounded (rAF is throttled/paused in background tabs).
+export function nextFrame() {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(finish);
+    setTimeout(finish, 50);
+  });
+}
+
 export function h(html) {
   const t = document.createElement("template");
   t.innerHTML = html.trim();

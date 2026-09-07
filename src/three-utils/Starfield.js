@@ -2,28 +2,27 @@
 // the camera so there is no parallax — the stars feel infinitely far away.
 import * as THREE from "three";
 import { makeStarTexture } from "./assets.js";
-import { STARFIELD, GRAPHICS_QUALITY } from "../game/config.js";
+import { STARFIELD, starCountFor } from "../game/config.js";
 import { mulberry } from "./assets.js";
 
 export class Starfield {
-  constructor(scene, quality = "high") {
+  constructor(scene, quality = "high", phone = false) {
     this.scene = scene;
     this.quality = quality;
+    this.phone = phone;
     this.group = new THREE.Group();
     this.group.name = "Starfield";
     this.points = null;
     this.nebulae = [];
     this._starTex = makeStarTexture();
     this._makeNebula();
-    this._makeStars(quality === "low" ? STARFIELD.COUNT_LOW : STARFIELD.COUNT_HIGH);
+    this._makeStars(starCountFor(quality, phone));
     this.group.position.set(0, 0, 0);
     scene.add(this.group);
   }
 
   setDensity(level) {
-    const count =
-      level === "low" ? STARFIELD.COUNT_LOW : level === "high" ? STARFIELD.COUNT_HIGH : Math.round((STARFIELD.COUNT_LOW + STARFIELD.COUNT_HIGH) / 2);
-    this._makeStars(count);
+    this._makeStars(starCountFor(level, this.phone));
   }
 
   _makeStars(count) {
